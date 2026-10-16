@@ -4,6 +4,19 @@
 - 열: 이름, 분류, 대표 메뉴, 영업시간, 주소, 캠퍼스에서 직선거리(m), 출처
 - 확인: uv run pytest tests/test_places.py
 """
+import csv
+
+# 단어 끝에 붙는 조사. 긴 것부터 적어 둔다
+PARTICLES = ("이랑", "으로", "이나", "이", "가", "은", "는", "을", "를", "도", "만", "에", "랑", "로", "나")
+
+
+def _variants(word):
+    """단어 그대로와, 끝의 조사를 뗀 모양들 (남는 글자가 2자 이상일 때만)"""
+    variants = [word]
+    for p in PARTICLES:
+        if word.endswith(p) and len(word) - len(p) >= 2:
+            variants.append(word[:-len(p)])
+    return variants
 
 
 def load_places(path):
@@ -12,7 +25,8 @@ def load_places(path):
     - 첫 줄(열 이름)을 열쇠로 쓴다 (csv.DictReader)
     - encoding="utf-8" (안 적으면 Windows에서 한글이 깨진다)
     """
-    raise NotImplementedError("Claude와 같이 채울 곳")
+    with open(path, encoding="utf-8") as f:
+        return list(csv.DictReader(f))
 
 
 def search(question, places, limit=5):
@@ -22,7 +36,15 @@ def search(question, places, limit=5):
     - 이름 · 분류 · 대표 메뉴를 이어 붙인 글에 단어가 들어 있으면 1점씩
     - 1점 이상인 식당을 점수 높은 순으로 limit개. 점수가 같으면 목록 순서대로
     """
-    raise NotImplementedError("Claude와 같이 채울 곳")
+    words = [w for w in question.split() if len(w) >= 2]
+    scored = []
+    for place in places:
+        text = place["이름"] + place["분류"] + place["대표 메뉴"]
+        score = sum(1 for w in words if any(v in text for v in _variants(w)))
+        if score >= 1:
+            scored.append((score, place))
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    return [place for score, place in scored[:limit]]
 
 
 def place_text(place):
@@ -30,4 +52,9 @@ def place_text(place):
 
     모양: "{이름}({분류}) — 대표 메뉴: {대표 메뉴} · 영업: {영업시간} · 캠퍼스에서 직선 {거리}m · 출처: {출처}"
     """
-    raise NotImplementedError("Claude와 같이 채울 곳")
+    return (
+        f"{place['이름']}({place['분류']}) — 대표 메뉴: {place['대표 메뉴']}"
+        f" · 영업: {place['영업시간']}"
+        f" · 캠퍼스에서 직선 {place['캠퍼스에서 직선거리(m)']}m"
+        f" · 출처: {place['출처']}"
+    )

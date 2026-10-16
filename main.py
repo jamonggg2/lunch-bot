@@ -3,12 +3,15 @@ import json
 import os
 import random
 import db
+import ai
+from prompts import SYSTEM_PROMPT_V1
+from prompts import SYSTEM_PROMPT_V1, build_prompt_v3
+import places
+from weather import describe, get_weather, weather_text
 
 import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI
-
-from weather import weather_text
 
 
 load_dotenv()
@@ -18,6 +21,8 @@ MENUS = ["라면", "햄버거", "마라탕", "샐러드"]
 
 app = FastAPI()  # 웹 서버 앱
 conn = db.connect()
+PLACES = places.load_places("places_sample.csv")  # 서버가 켜질 때 한 번만 읽는다
+FOOD_WORDS = ("식당", "맛집", "먹", "메뉴", "추천", "배고", "점심", "밥")
 
 @app.post("/")  # 텔레그램이 메시지(JSON)를 이 주소로 POST 해 준다 (webhook)
 def webhook(body: dict):
@@ -34,7 +39,7 @@ def webhook(body: dict):
     if text == "/start":
         output = "안녕하세요! 오늘 뭐 먹지? 봇입니다. /help 로 사용법을 보세요."
     elif text == "/help":
-        output = "/lunch 점심 메뉴 하나\n/lotto 로또 번호 6개\n/weather 지금 캠퍼스 날씨\n/ate 먹은메뉴기록\n/history 먹은것확인\n그 밖의 말은 따라 해요"
+        output = "/lunch 점심 메뉴 하나\n/lotto 로또 번호 6개\n/weather 지금 캠퍼스 날씨\n/ate 먹은메뉴기록\n/history 먹은것확인\n그 밖의 말은 AI가 대답해요"
     elif text == "/lunch":
         output = random.choice(MENUS)
     elif text == "/lotto":
@@ -58,9 +63,15 @@ def webhook(body: dict):
             output = "아직 기록이 없어요. /ate 메뉴명 으로 적어 보세요."
     elif text.startswith("/"):
         output = "모르는 명령이에요. /help 를 보내 보세요."
-    else:
-        output = text  # 메아리
-
+    else:                                       #AI 답변
+        if any(w in text for w in FOOD_WORDS):  # 식당·음식 관련 말이면 목록에서 먼저 찾는다
+            found = places.search(text, PLACES)
+            weather = get_weather()
+            weather_line = describe(weather) if weather else "정보 없음"
+            system = build_prompt_v3(weather_line, db.recent_meals(conn), found)
+        else:
+            system = SYSTEM_PROMPT_V1
+        output = ai.ask_ai(system, text)
     requests.get(f"{URL}/sendMessage", params={"chat_id": chat_id, "text": output})  # 답장 보내기
     print("[보냄]", output)
     return {"ok": True}  # 200 OK = 잘 받았다. 중간에 에러로 멈추면(500) 텔레그램이 같은 메시지를 다시 보낸다
