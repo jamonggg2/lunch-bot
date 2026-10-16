@@ -24,6 +24,9 @@ def connect(path=DB_PATH):
         "CREATE TABLE IF NOT EXISTS meals ("
         "id INTEGER PRIMARY KEY, eaten_at TEXT, menu TEXT)"
     )
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(meals)")]
+    if "chat_id" not in columns:  # 예전에 만든 lunch.db에는 chat_id 열이 없다
+        conn.execute("ALTER TABLE meals ADD COLUMN chat_id INTEGER")
     conn.commit()
     return conn
 
@@ -50,5 +53,33 @@ def recent_meals(conn, limit=5):
     """최근에 먹은 것을 [(먹은 시각, 메뉴), ...]로 돌려준다. 최근 것부터 limit개 (id 큰 순)."""
     rows = conn.execute(
         "SELECT eaten_at, menu FROM meals ORDER BY id DESC LIMIT ?", (limit,)
+    )
+    return rows.fetchall()
+
+
+def save_meal_for(conn, chat_id, menu, eaten_at):
+    """누가(chat_id) 먹었는지까지 같이 저장한다. 하루 횟수를 세려면 이 함수로 저장해야 한다."""
+    conn.execute(
+        "INSERT INTO meals (eaten_at, menu, chat_id) VALUES (?, ?, ?)",
+        (eaten_at, menu, chat_id),
+    )
+    conn.commit()
+
+
+def count_today(conn, chat_id):
+    """이 사람(chat_id)이 오늘(한국 시간) /ate 로 적은 횟수."""
+    today = now()[:10]  # "2026-10-16 12:31" 의 앞 10글자 = 오늘 날짜
+    row = conn.execute(
+        "SELECT COUNT(*) FROM meals WHERE chat_id = ? AND eaten_at LIKE ?",
+        (chat_id, today + "%"),
+    ).fetchone()
+    return row[0]
+
+
+def recent_meals_for(conn, chat_id, limit=5):
+    """이 사람(chat_id)이 최근에 먹은 것을 [(먹은 시각, 메뉴), ...]로. 최근 것부터 limit개."""
+    rows = conn.execute(
+        "SELECT eaten_at, menu FROM meals WHERE chat_id = ? ORDER BY id DESC LIMIT ?",
+        (chat_id, limit),
     )
     return rows.fetchall()

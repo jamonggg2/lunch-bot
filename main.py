@@ -4,8 +4,7 @@ import os
 import random
 import db
 import ai
-from prompts import SYSTEM_PROMPT_V1
-from prompts import SYSTEM_PROMPT_V1, build_prompt_v3
+from prompts import SYSTEM_PROMPT_V1, build_prompt_v3, SALAD_RULE
 import places
 from weather import describe, get_weather, weather_text
 
@@ -23,6 +22,7 @@ app = FastAPI()  # 웹 서버 앱
 conn = db.connect()
 PLACES = places.load_places("places_sample.csv")  # 서버가 켜질 때 한 번만 읽는다
 FOOD_WORDS = ("식당", "맛집", "먹", "메뉴", "추천", "배고", "점심", "밥")
+SALAD_LIMIT = 5 #하루에 이만큼 /ate하면 샐러드만 추천한다
 
 @app.post("/")  # 텔레그램이 메시지(JSON)를 이 주소로 POST 해 준다 (webhook)
 def webhook(body: dict):
@@ -41,7 +41,10 @@ def webhook(body: dict):
     elif text == "/help":
         output = "/lunch 점심 메뉴 하나\n/lotto 로또 번호 6개\n/weather 지금 캠퍼스 날씨\n/ate 먹은메뉴기록\n/history 먹은것확인\n그 밖의 말은 AI가 대답해요"
     elif text == "/lunch":
-        output = random.choice(MENUS)
+        if db.count_today(conn, chat_id) >= SALAD_LIMIT:    #식사제한량을 넘어가면 샐러드만 추천한다
+            output = "샐러드"
+        else:
+            output = random.choice(MENUS)                   #기본 메뉴추천
     elif text == "/lotto":
         numbers = random.sample(range(1, 46), 6)  # 1~45 중 겹치지 않게 6개 뽑기
         numbers.sort()                            # 작은 숫자부터 정렬
@@ -51,12 +54,12 @@ def webhook(body: dict):
     elif text.startswith("/ate"):   
         menu = text[len("/ate"):].strip()     #메뉴명 확인
         if menu:
-            db.save_meal(conn, menu, db.now())  #메뉴명이 정상적으로 입력되어 있는 경우에만 기록
+            db.save_meal_for(conn, chat_id, menu, db.now()) #사용자까지 저장
             output = f"기록했어요: {menu}"  
         else:
             output = "사용법: /ate 김치찌개"    #메뉴명 누락인 경우 사용법안내
     elif text == "/history":                #먹은것 확인기능
-        meals = db.recent_meals(conn)
+        meals = db.recent_meals_for(conn, chat_id)
         if meals:
             output = "\n".join(f"{when}  {menu}" for when, menu in meals)
         else:
@@ -65,10 +68,18 @@ def webhook(body: dict):
         output = "모르는 명령이에요. /help 를 보내 보세요."
     else:                                       #AI 답변
         if any(w in text for w in FOOD_WORDS):  # 식당·음식 관련 말이면 목록에서 먼저 찾는다
-            found = places.search(text, PLACES)
+            salad_mode = db.count_today(conn, chat_id) >= SALAD_LIMIT   #샐러드만 추천해야하는지 확인
+            if salad_mode:
+                found = places.search("샐러드 키토", PLACES)    #샐러드식당만 찾는다
+            else:
+                found = places.search(text, PLACES)         
+
             weather = get_weather()
             weather_line = describe(weather) if weather else "정보 없음"
-            system = build_prompt_v3(weather_line, db.recent_meals(conn), found)
+            system = build_prompt_v3(weather_line, db.recent_meals_for(conn, chat_id), found)
+
+            if salad_mode: 
+                system += SALAD_RULE
         else:
             system = SYSTEM_PROMPT_V1
         output = ai.ask_ai(system, text)
